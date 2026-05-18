@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk
 import threading
 import os
+import subprocess
+import re
 
 # پورت‌های مهم و پرکاربرد
 DEFAULT_PORTS = [
@@ -14,6 +16,84 @@ DEFAULT_PORTS = [
 
 # متغیر برای کنترل متوقف کردن اسکن
 stop_scan = False
+
+def detect_os(target_ip):
+    """OS Detection based on TTL (Time To Live) analysis"""
+    try:
+        # دستور ping برای بدست آوردن TTL
+        if os.name == "nt":  # Windows
+            ping_cmd = ["ping", "-n", "1", target_ip]
+            pattern = r"TTL=(\d+)"
+        else:  # Linux/Mac
+            ping_cmd = ["ping", "-c", "1", target_ip]
+            pattern = r"ttl=(\d+)"
+        
+        result = subprocess.run(
+            ping_cmd,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        match = re.search(pattern, result.stdout, re.IGNORECASE)
+        
+        if match:
+            ttl = int(match.group(1))
+            
+            # تشخیص سیستم عامل بر اساس TTL
+            # Windows: 128, Linux: 64, Cisco: 255
+            # ranges برای در نظر گرفتن hop‌های میانی
+            if ttl >= 220 or ttl == 255:
+                return "OS Detection: Cisco/Network Device (TTL: 255)"
+            elif ttl >= 95:
+                return "OS Detection: Windows (TTL: ~128)"
+            elif ttl >= 40:
+                return "OS Detection: Linux/Unix (TTL: ~64)"
+            else:
+                return f"OS Detection: Unknown (TTL: {ttl})"
+        else:
+            return "OS Detection: Could not determine TTL"
+            
+    except Exception as e:
+        return f"OS Detection: Failed - {str(e)}"
+
+def banner_grabbing(target_ip, port):
+    """Banner Grabbing - دریافت اطلاعات سرویس از پورت‌های باز"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect((target_ip, port))
+        
+        # سعی برای دریافت banner
+        banner = s.recv(1024).decode('utf-8', errors='ignore').strip()
+        s.close()
+        
+        # تشخیص سرویس و OS بر اساس banner
+        banner_lower = banner.lower()
+        
+        if not banner:
+            return None
+        
+        # شناسایی سرویس و ورژن
+        if 'ssh' in banner_lower:
+            return f"SSH: {banner}"
+        elif 'http' in banner_lower or 'server:' in banner_lower:
+            return f"HTTP: {banner}"
+        elif 'ftp' in banner_lower:
+            return f"FTP: {banner}"
+        elif 'smtp' in banner_lower:
+            return f"SMTP: {banner}"
+        elif 'pop' in banner_lower:
+            return f"POP3: {banner}"
+        elif 'imap' in banner_lower:
+            return f"IMAP: {banner}"
+        else:
+            return f"Service: {banner}"
+    
+    except socket.timeout:
+        return None
+    except:
+        return None
 
 def scan_ports_gui():
     target = entry_target.get()
@@ -40,6 +120,13 @@ def scan_ports_gui():
         return
 
     output.insert(tk.END, f"Scanning {target} ({target_ip})...\n")
+    
+    # اگر OS Detection فعال باشد
+    if os_detect_var.get():
+        output.insert(tk.END, "Detecting OS...\n")
+        os_info = detect_os(target_ip)
+        output.insert(tk.END, f"{os_info}\n")
+    
     global stop_scan
     stop_scan = False
 
@@ -53,6 +140,12 @@ def scan_ports_gui():
         result = s.connect_ex((target_ip, port))
         if result == 0:
             output.insert(tk.END, f"Port {port} is open\n")
+            
+            # سعی برای دریافت banner
+            banner_info = banner_grabbing(target_ip, port)
+            if banner_info:
+                output.insert(tk.END, f"  └─ {banner_info}\n")
+        
         s.close()
         progress_bar['value'] = count
         root.update_idletasks()
@@ -115,21 +208,26 @@ entry_end.grid(row=3, column=1, padx=10, pady=5, sticky="w")
 entry_end.insert(0, str(DEFAULT_PORTS[-1]))
 entry_end.config(state="disabled")
 
-button_frame = tk.Frame(root)
-button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+# Checkbox برای OS Detection
+os_detect_var = tk.BooleanVar(value=False)
+os_detect_check = tk.Checkbutton(root, text="Enable OS Detection", variable=os_detect_var, font=font_label)
+os_detect_check.grid(row=4, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
-scan_btn = tk.Button(button_frame, text="Scan", font=font_button, command="Start", width=10)
+button_frame = tk.Frame(root)
+button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+
+scan_btn = tk.Button(button_frame, text="Scan", font=font_button, command=start_scan_thread, width=10)
 scan_btn.pack(side="left", padx=5)
 
-cancel_btn = tk.Button(button_frame, text="Cancel", font=font_button, command="Cancel", width=10)
+cancel_btn = tk.Button(button_frame, text="Cancel", font=font_button, command=cancel_scan, width=10)
 cancel_btn.pack(side="left", padx=5)
 
 root.bind("<Return>", lambda e: start_scan_thread())
 
 progress_bar = ttk.Progressbar(root, orient="horizontal", length=500, mode="determinate")
-progress_bar.grid(row=5, column=0, columnspan=2, padx=10, pady=5)
+progress_bar.grid(row=6, column=0, columnspan=2, padx=10, pady=5)
 
 output = scrolledtext.ScrolledText(root, width=70, height=15, font=font_output)
-output.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
+output.grid(row=7, column=0, columnspan=2, padx=10, pady=10)
 
 root.mainloop()
