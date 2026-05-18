@@ -12,6 +12,9 @@ DEFAULT_PORTS = [
     3306, 3389, 5060, 5061, 5432, 5900, 6000, 8080, 8443, 8888, 10000
 ]
 
+# متغیر برای کنترل متوقف کردن اسکن
+stop_scan = False
+
 def scan_ports_gui():
     target = entry_target.get()
     # اگر حالت Default انتخاب شده، از DEFAULT_PORTS استفاده می‌کنیم
@@ -37,8 +40,14 @@ def scan_ports_gui():
         return
 
     output.insert(tk.END, f"Scanning {target} ({target_ip})...\n")
+    global stop_scan
+    stop_scan = False
 
     for count, port in enumerate(ports, start=1):
+        if stop_scan:
+            output.insert(tk.END, "Scan cancelled.\n\n")
+            progress_bar['value'] = 0
+            return
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.5)
         result = s.connect_ex((target_ip, port))
@@ -54,6 +63,10 @@ def scan_ports_gui():
 def start_scan_thread():
     thread = threading.Thread(target=scan_ports_gui)
     thread.start()
+
+def cancel_scan():
+    global stop_scan
+    stop_scan = True
 
 def on_combo_change(event):
     # اگر Default انتخاب شد، Entryها غیر فعال شوند
@@ -102,8 +115,16 @@ entry_end.grid(row=3, column=1, padx=10, pady=5, sticky="w")
 entry_end.insert(0, str(DEFAULT_PORTS[-1]))
 entry_end.config(state="disabled")
 
-scan_btn = tk.Button(root, text="Scan", font=font_button, command=start_scan_thread, width=20)
-scan_btn.grid(row=4, column=0, columnspan=2, pady=10)
+button_frame = tk.Frame(root)
+button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+
+scan_btn = tk.Button(button_frame, text="Scan", font=font_button, command="Start", width=10)
+scan_btn.pack(side="left", padx=5)
+
+cancel_btn = tk.Button(button_frame, text="Cancel", font=font_button, command="Cancel", width=10)
+cancel_btn.pack(side="left", padx=5)
+
+root.bind("<Return>", lambda e: start_scan_thread())
 
 progress_bar = ttk.Progressbar(root, orient="horizontal", length=500, mode="determinate")
 progress_bar.grid(row=5, column=0, columnspan=2, padx=10, pady=5)
